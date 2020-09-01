@@ -110,9 +110,9 @@ def generate_raw_expression_table(gse):
             gsm_name = get_gsm_bxd_name(gsm, 'Erythroid')
 
             if gsm_name:
-                insert_name = gsm_name
+                insert_name = str(gsm_name)
                 if gsm_name in name_table:
-                    insert_name += ('.' + name_table[gsm_name])
+                    insert_name += ('.' + str(name_table[gsm_name]))
 
                 read_table[insert_name] = gsm.table['VALUE']
                 name_table[gsm_name] = name_table.get(gsm_name, 0) + 1
@@ -201,11 +201,11 @@ def table_add_gene_annotations(gene_table, location_table, origin):
     print("No intermediate annotated expression file. Annotating...")
     gene_loc_by_id = get_table_genes(gene_table, location_table.T.to_dict(orient='list'))
     negative_dummy_list = [np.nan for _ in range(6)]
-    XY_handling = {'X': '23', 'Y': '24'}
+    xy_handling = {'X': '23', 'Y': '24'}
     location_columnns = {
         'gene_name': [gene_loc_by_id.get(idv, negative_dummy_list)[0]
                       for _, idv in gene_table['ID'].iteritems()],
-        'chromosome': [XY_handling.get(gene_loc_by_id.get(idv, negative_dummy_list)[3],
+        'chromosome': [xy_handling.get(gene_loc_by_id.get(idv, negative_dummy_list)[3],
                                        gene_loc_by_id.get(idv, negative_dummy_list)[3])
                        for _, idv in gene_table['ID'].iteritems()],
         'start': [gene_loc_by_id.get(idv, negative_dummy_list)[4]
@@ -221,30 +221,67 @@ def table_add_gene_annotations(gene_table, location_table, origin):
     return gene_table
 
 
-def table_remove_duplicate_genes(table, origin):
+def table_remove_duplicate_genes(table):
+    """
+    Given a table, removes all rows of expression for the same gene,
+    and replaces them with a single row for each gene, with the mean expression of all rows.
+    Since by this time IDs of individual genes are not used, the first ID for each gene name
+    is used as a convenient default.
+    """
+    mean_rows = dict()
+    mean_genes = set()
+    for row_id, dup in table.duplicated('gene_name', keep=False).iteritems():
+        if dup and table['gene_name'][row_id] not in mean_genes:
+            mean_genes.add(table['gene_name'][row_id])
+
+            row = table.loc[row_id]
+            dup_rows = table.loc[table['gene_name'] == table.loc[row_id]['gene_name']]
+            dup_expression = dup_rows[[col for col in table.columns if col.startswith('BXD')]]
+            mean_expression = dup_expression.astype('float64').mean(axis=0, numeric_only=True)
+            mean_rows[row_id] = [row['GB_ACC']] + list(mean_expression) + \
+                list(row[['gene_name', 'chromosome', 'start', 'end']])
+
+    table.drop_duplicates('gene_name', keep=False, inplace=True)
+    mean_dataframe = pd.DataFrame.from_dict(mean_rows, orient='index', columns=list(table.columns))
+    result = pd.concat([table, mean_dataframe])
+    return result
+
+
+def table_remove_duplicate_strains(table):
+    """
+    Given a table, remove all columns starting with the same BXD strain and inserts
+    columns with a mean of all individuals of the same strain.
+    """
+    raise NotImplementedError
+
+
+def table_remove_duplicates(table, origin):
+    """
+    Given an annotated expression table, removes duplicate rows (multiple tests for the same gene in each strain)
+    and duplicate columns (multiple individuals of each strain). The resulting table is stored
+    as an intermediate file. If such a file already exists, return it instead.
+    """
     filename = "{0}_no_duplicates.csv".format(origin)
     if filename in os.listdir('./intermediate_files'):
-        print("Intermediate no duplicate expression file found. Retrieving...")
-        annotated_expression = pd.read_csv('./intermediate_files/' + filename)
-        return annotated_expression.set_index('ID')
+        print("Intermediate expression file with no duplicates found. Retrieving...")
+        no_duplicate_expression = pd.read_csv('./intermediate_files/' + filename)
+        return no_duplicate_expression
 
     print("No intermediate no duplicate expression file. Removing duplicates...")
-    print(set(table['chromosome']))
-    """
-    column_dtypes = {col: 'object' if col in {'gene_name', 'GB_ACC'} else 'float64' for col in table.columns}
-    print(column_dtypes)
-    table.astype(column_dtypes, copy=False, errors='raise')
-    print(table.groupby(['gene_name', 'GB_ACC']).mean())
-    """
+    no_duplicate_strains = table_remove_duplicate_strains(table)
+    no_duplicates = table_remove_duplicate_genes(no_duplicate_strains)
+    no_duplicates.to_csv('./intermediate_files/' + filename)
 
 
 if __name__ == "__main__":
     gene_locations = build_gene_location_dict()
     kidney_gse = geo.get_GEO(geo='GSE8356', destdir='./expression_data')
     kidney_table = generate_raw_expression_table(kidney_gse)
-    blood_gse = geo.get_GEO(geo='GSE18067', destdir='./expression_data')
-    blood_table = generate_raw_expression_table(blood_gse)
+    liver_gse = geo.get_GEO(geo='GSE17522', destdir='./expression_data')
+    liver_table = generate_raw_expression_table(liver_gse)
 
-    idney_table = table_add_gene_annotations(kidney_table, gene_locations, 'kidney')
-    blood_table = table_add_gene_annotations(blood_table, gene_locations, 'blood')
-    table_remove_duplicate_genes(blood_table, 'blood')
+    kidney_table = table_add_gene_annotations(kidney_table, gene_locations, 'kidney')
+    liver_table = table_add_gene_annotations(liver_table, gene_locations, 'liver')
+
+    kidney_table = table_remove_duplicates(kidney_table, 'kidney')
+    liver_table = table_remove_duplicates(liver_table, 'liver')
