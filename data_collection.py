@@ -201,10 +201,12 @@ def table_add_gene_annotations(gene_table, location_table, origin):
     print("No intermediate annotated expression file. Annotating...")
     gene_loc_by_id = get_table_genes(gene_table, location_table.T.to_dict(orient='list'))
     negative_dummy_list = [np.nan for _ in range(6)]
+    XY_handling = {'X': '23', 'Y': '24'}
     location_columnns = {
         'gene_name': [gene_loc_by_id.get(idv, negative_dummy_list)[0]
                       for _, idv in gene_table['ID'].iteritems()],
-        'chromosome': [gene_loc_by_id.get(idv, negative_dummy_list)[3]
+        'chromosome': [XY_handling.get(gene_loc_by_id.get(idv, negative_dummy_list)[3],
+                                       gene_loc_by_id.get(idv, negative_dummy_list)[3])
                        for _, idv in gene_table['ID'].iteritems()],
         'start': [gene_loc_by_id.get(idv, negative_dummy_list)[4]
                   for i_, idv in gene_table['ID'].iteritems()],
@@ -227,13 +229,13 @@ def table_remove_duplicate_genes(table, origin):
         return annotated_expression.set_index('ID')
 
     print("No intermediate no duplicate expression file. Removing duplicates...")
-    print(table.columns)
-    print(table.iloc[0])
-    acc = 0
-    for rid, dup in table.duplicated('gene_name', keep=False).iteritems():
-        if dup:
-            acc += 1
-            print(acc, table.loc[rid]['gene_name'])
+    print(set(table['chromosome']))
+    """
+    column_dtypes = {col: 'object' if col in {'gene_name', 'GB_ACC'} else 'float64' for col in table.columns}
+    print(column_dtypes)
+    table.astype(column_dtypes, copy=False, errors='raise')
+    print(table.groupby(['gene_name', 'GB_ACC']).mean())
+    """
 
 
 if __name__ == "__main__":
@@ -243,6 +245,6 @@ if __name__ == "__main__":
     blood_gse = geo.get_GEO(geo='GSE18067', destdir='./expression_data')
     blood_table = generate_raw_expression_table(blood_gse)
 
-    # kidney_table = table_add_gene_annotations(kidney_table, gene_locations, 'kidney')
+    idney_table = table_add_gene_annotations(kidney_table, gene_locations, 'kidney')
     blood_table = table_add_gene_annotations(blood_table, gene_locations, 'blood')
     table_remove_duplicate_genes(blood_table, 'blood')
