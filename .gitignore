@@ -1,0 +1,5 @@
+.idea/
+*.txt
+venv/
+expression_data/
+intermediate_files/
