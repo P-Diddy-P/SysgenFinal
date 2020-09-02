@@ -7,6 +7,9 @@ import pandas as pd
 import GEOparse as geo
 from Bio import Entrez
 
+import pylab
+import scipy.stats as stats
+
 Entrez.api_key = 'cc86c67528c5c05e90be06cace971d287b08'
 Entrez.email = 'omershapira@mail.tau.ac.il'
 Entrez.tool = 'sysgen-final-project'
@@ -238,13 +241,12 @@ def table_remove_duplicate_genes(table):
             dup_rows = table.loc[table['gene_name'] == table.loc[row_id]['gene_name']]
             dup_expression = dup_rows[[col for col in table.columns if col.startswith('BXD')]]
             mean_expression = dup_expression.astype('float64').mean(axis=0, numeric_only=True)
-            mean_rows[row_id] = [row['GB_ACC']] + list(mean_expression) + \
-                list(row[['gene_name', 'chromosome', 'start', 'end']])
+            mean_rows[row_id] = list(row[['GB_ACC', 'gene_name', 'chromosome', 'start', 'end']]) \
+                + list(mean_expression)
 
     table.drop_duplicates('gene_name', keep=False, inplace=True)
     mean_dataframe = pd.DataFrame.from_dict(mean_rows, orient='index', columns=list(table.columns))
-    result = pd.concat([table, mean_dataframe])
-    return result
+    return pd.concat([table, mean_dataframe])
 
 
 def table_remove_duplicate_strains(table):
@@ -252,7 +254,16 @@ def table_remove_duplicate_strains(table):
     Given a table, remove all columns starting with the same BXD strain and inserts
     columns with a mean of all individuals of the same strain.
     """
-    raise NotImplementedError
+    def get_bxd_number(s):
+        res = s[0:4]
+        if len(s) >= 5 and s[4] in {str(i) for i in range(10)}:
+            res += s[4]
+        return res
+
+    table_expression = table[[col for col in table.columns if col.startswith('BXD')]].astype('float64')
+    table_grouped = table_expression.groupby(by=get_bxd_number, axis=1, as_index=True).mean()
+    table_identification = table[[col for col in table.columns if not col.startswith('BXD')]]
+    return table_identification.merge(table_grouped, how='inner', left_index=True, right_index=True)
 
 
 def table_remove_duplicates(table, origin):
@@ -275,13 +286,13 @@ def table_remove_duplicates(table, origin):
 
 if __name__ == "__main__":
     gene_locations = build_gene_location_dict()
-    kidney_gse = geo.get_GEO(geo='GSE8356', destdir='./expression_data')
-    kidney_table = generate_raw_expression_table(kidney_gse)
     liver_gse = geo.get_GEO(geo='GSE17522', destdir='./expression_data')
     liver_table = generate_raw_expression_table(liver_gse)
+    kidney_gse = geo.get_GEO(geo='GSE8356', destdir='./expression_data')
+    kidney_table = generate_raw_expression_table(kidney_gse)
 
-    kidney_table = table_add_gene_annotations(kidney_table, gene_locations, 'kidney')
     liver_table = table_add_gene_annotations(liver_table, gene_locations, 'liver')
+    kidney_table = table_add_gene_annotations(kidney_table, gene_locations, 'kidney')
 
-    kidney_table = table_remove_duplicates(kidney_table, 'kidney')
     liver_table = table_remove_duplicates(liver_table, 'liver')
+    kidney_table = table_remove_duplicates(kidney_table, 'kidney')
