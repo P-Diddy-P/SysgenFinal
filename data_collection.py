@@ -7,9 +7,6 @@ import pandas as pd
 import GEOparse as geo
 from Bio import Entrez
 
-import pylab
-import scipy.stats as stats
-
 Entrez.api_key = 'cc86c67528c5c05e90be06cace971d287b08'
 Entrez.email = 'omershapira@mail.tau.ac.il'
 Entrez.tool = 'sysgen-final-project'
@@ -145,6 +142,8 @@ def accession_get_gene(acc_data, dest_dict, loc_dict):
     """
     Requests gene names for a batch of accession ids, and adds a their
     location data from the already processed location dict.
+
+    NOTE: GET YOUR OWN DAMN ENTREZ API KEY FOR THIS.
     """
     acc_data = {v: k for k, v in acc_data.items()}
     response = Entrez.efetch(db='nuccore', retmode='xml',
@@ -220,7 +219,8 @@ def table_add_gene_annotations(gene_table, location_table, origin):
     gene_table = gene_table.assign(**location_columnns)
     gene_table.dropna(axis=0, how='any', inplace=True)
     gene_table.set_index('ID', inplace=True)
-    gene_table.to_csv('./intermediate_files/' + filename)
+    if origin:
+        gene_table.to_csv('./intermediate_files/' + filename)
     return gene_table
 
 
@@ -276,23 +276,76 @@ def table_remove_duplicates(table, origin):
     if filename in os.listdir('./intermediate_files'):
         print("Intermediate expression file with no duplicates found. Retrieving...")
         no_duplicate_expression = pd.read_csv('./intermediate_files/' + filename)
-        return no_duplicate_expression
+        return no_duplicate_expression.set_index('ID')
 
     print("No intermediate no duplicate expression file. Removing duplicates...")
     no_duplicate_strains = table_remove_duplicate_strains(table)
     no_duplicates = table_remove_duplicate_genes(no_duplicate_strains)
-    no_duplicates.to_csv('./intermediate_files/' + filename)
+    if origin:
+        no_duplicates.to_csv('./intermediate_files/' + filename)
+    return no_duplicates
+
+
+def tables_drop_unique_strains(table1, table2):
+    """
+    Given 2 gene expression tables, drops all columns with strains not shared by
+    both tables.
+    """
+    shared_columns = set(table1.columns) & set(table2.columns)
+    table1_dropped = table1.drop(columns=[col for col in table1.columns if col not in shared_columns])
+    table2_dropped = table2.drop(columns=[col for col in table2.columns if col not in shared_columns])
+
+    return table1_dropped, table2_dropped
+
+
+def table_filter(table, by_var=True, vl=1.25, vu=2.0, by_mean=False, ml=-1.0, mu=1.0):
+    """
+    Filters a given table by argument constraints on the mean and variance of
+    gene expression distribution among different samples (i.e. the mean and variance of
+    each row). The filtered table should contain about 1000 genes at most.
+    """
+    expression_table = table[[col for col in table.columns if col.startswith('BXD')]].astype('float64')
+    row_variance = expression_table.var(axis=1, numeric_only=True)
+    row_mean = expression_table.mean(axis=1, numeric_only=True)
+
+    mv = row_variance.mean()
+    mm = row_mean.mean()
+
+    filtered_table = table.loc[[row_id for row_id, _ in expression_table.iterrows() if
+                                (not by_var or vl*mv < row_variance[row_id] < vu*mv) and
+                                (not by_mean or ml*mm < row_mean[row_id] < mu*mm)]]
+    return filtered_table
+
+
+def gene_expression_pipeline(geo_id, tissue_origin, gene_locations):
+    """
+    Given a GEO id and a gene location table, runs the whole data
+    pipeline of annotation -> duplication removal -> filtering on the GEO gene expression
+    table.
+    The tissue origin parameter is given to save intermediate results of the pipeline
+    and reduce runtime when trying different filtering parameters. An empty string can be
+    supplied to disallow saving of intermediate files.
+
+    NOTE:
+    1. GEOparse will download an expression SOFT file and save it in destdir unless one
+        is already provided.
+    2. table_add_gene_annotations requires several minutes to run (because of eutils requests).
+       Do NOT terminate early.
+    3. After running table_remove_duplicates, for some reason the ID column header is not saved
+       in the csv. This can be easily fixed manually once (not worth code intervention).
+    """
+    gse_data = geo.get_GEO(geo=geo_id, destdir='./expression_data')
+    expression_table = generate_raw_expression_table(gse_data)
+    expression_table = table_add_gene_annotations(expression_table, gene_locations, tissue_origin)
+    expression_table = table_remove_duplicates(expression_table, tissue_origin)
+    filtered_expression = table_filter(expression_table)
+
+    return filtered_expression
 
 
 if __name__ == "__main__":
     gene_locations = build_gene_location_dict()
-    liver_gse = geo.get_GEO(geo='GSE17522', destdir='./expression_data')
-    liver_table = generate_raw_expression_table(liver_gse)
-    kidney_gse = geo.get_GEO(geo='GSE8356', destdir='./expression_data')
-    kidney_table = generate_raw_expression_table(kidney_gse)
+    liver_table = gene_expression_pipeline('GSE17522', 'liver', gene_locations)
+    kidney_table = gene_expression_pipeline('GSE8356', 'kidney', gene_locations)
 
-    liver_table = table_add_gene_annotations(liver_table, gene_locations, 'liver')
-    kidney_table = table_add_gene_annotations(kidney_table, gene_locations, 'kidney')
-
-    liver_table = table_remove_duplicates(liver_table, 'liver')
-    kidney_table = table_remove_duplicates(kidney_table, 'kidney')
+    liver_table, kidney_table = tables_drop_unique_strains(liver_table, kidney_table)
