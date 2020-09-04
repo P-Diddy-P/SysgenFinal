@@ -286,18 +286,6 @@ def table_remove_duplicates(table, origin):
     return no_duplicates
 
 
-def tables_drop_unique_strains(table1, table2):
-    """
-    Given 2 gene expression tables, drops all columns with strains not shared by
-    both tables.
-    """
-    shared_columns = set(table1.columns) & set(table2.columns)
-    table1_dropped = table1.drop(columns=[col for col in table1.columns if col not in shared_columns])
-    table2_dropped = table2.drop(columns=[col for col in table2.columns if col not in shared_columns])
-
-    return table1_dropped, table2_dropped
-
-
 def table_filter(table, by_var=True, vl=1.25, vu=2.0, by_mean=False, ml=-1.0, mu=1.0):
     """
     Filters a given table by argument constraints on the mean and variance of
@@ -347,5 +335,3 @@ if __name__ == "__main__":
     gene_locations = build_gene_location_dict()
     liver_table = gene_expression_pipeline('GSE17522', 'liver', gene_locations)
     kidney_table = gene_expression_pipeline('GSE8356', 'kidney', gene_locations)
-
-    liver_table, kidney_table = tables_drop_unique_strains(liver_table, kidney_table)

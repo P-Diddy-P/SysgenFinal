@@ -3,3 +3,4 @@
 venv/
 expression_data/
 intermediate_files/
+__pycache__/
